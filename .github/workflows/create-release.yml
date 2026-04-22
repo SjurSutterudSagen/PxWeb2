@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write # Needed to see draft releases
     outputs:
       tag_name: ${{ steps.semver.outputs.tag_name }}
       resolved_ref: ${{ steps.release.outputs.resolved_ref }}
