@@ -65,6 +65,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          # Draft releases can temporarily use GitHub's untagged-* tag_name before publish.
+          # Resolve the intended draft by exact tag_name first, then by release name containing
+          # the requested tag, and fail on ambiguity. Build from the real git tag when it
+          # already exists; otherwise fall back to the draft's target_commitish.
           print_candidates() {
             jq -r '.[] | "- id=\(.id) tag_name=\(.tag_name // "null") name=\(.name // "") target_commitish=\(.target_commitish // "null")"' <<<"$1"
           }
