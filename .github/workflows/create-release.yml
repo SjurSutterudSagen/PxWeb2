@@ -62,13 +62,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$TAG_NAME" --json isDraft,targetCommitish >/dev/null; then
+          release_json=$(gh api --paginate -R "$GITHUB_REPOSITORY" "/repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s --arg tag "$TAG_NAME" 'map(.[]) | map(select(.tag_name == $tag)) | first')
+
+          if [ -z "$release_json" ] || [ "$release_json" = "null" ]; then
             echo "Release $TAG_NAME does not exist."
             exit 1
           fi
 
-          is_draft=$(gh release view "$TAG_NAME" --json isDraft -q '.isDraft')
-          target_commitish=$(gh release view "$TAG_NAME" --json targetCommitish -q '.targetCommitish')
+          is_draft=$(echo "$release_json" | jq -r '.draft')
+          target_commitish=$(echo "$release_json" | jq -r '.target_commitish')
 
           if [ "$is_draft" != "true" ]; then
             echo "Release $TAG_NAME is not a draft. Aborting to keep releases immutable."
@@ -120,7 +122,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "$TAG_NAME" "pxweb-$TAG_NAME.zip" --clobber
+          gh release upload -R "$GITHUB_REPOSITORY" "$TAG_NAME" "pxweb-$TAG_NAME.zip" --clobber
 
   docker_publish:
     runs-on: ubuntu-latest
