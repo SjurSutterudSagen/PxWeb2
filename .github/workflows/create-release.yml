@@ -162,7 +162,7 @@ jobs:
           RELEASE_UPLOAD_URL: ${{ needs.validate.outputs.release_upload_url }}
         run: |
           asset_name="pxweb-$TAG_NAME.zip"
-          upload_path="${RELEASE_UPLOAD_URL#https://uploads.github.com}"
+          upload_url="${RELEASE_UPLOAD_URL%\{*}?name=${asset_name}"
           existing_asset_ids=$(
             gh api --paginate "/repos/$GH_REPO/releases/$RELEASE_ID/assets?per_page=100" |
               jq -sr --arg name "$asset_name" 'map(.[]) | map(select(.name == $name)) | .[].id'
@@ -175,12 +175,12 @@ jobs:
             done <<<"$existing_asset_ids"
           fi
 
-          gh api \
-            --hostname uploads.github.com \
-            --method POST \
-            --header "Content-Type: application/zip" \
-            "${upload_path%\{*}?name=${asset_name}" \
-            --input "$asset_name" \
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/zip" \
+            --data-binary "@$asset_name" \
+            "$upload_url" \
             >/dev/null
 
   docker_publish:
