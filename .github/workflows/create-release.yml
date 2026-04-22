@@ -118,7 +118,7 @@ jobs:
 
           release_id=$(jq -r '.id' <<<"$release_json")
           release_tag_name=$(jq -r '.tag_name' <<<"$release_json")
-          release_upload_url="/repos/$GH_REPO/releases/$release_id/assets"
+          release_upload_url=$(jq -r '.upload_url' <<<"$release_json")
 
           echo "resolved_ref=$resolved_ref" >> "$GITHUB_OUTPUT"
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
@@ -162,6 +162,7 @@ jobs:
           RELEASE_UPLOAD_URL: ${{ needs.validate.outputs.release_upload_url }}
         run: |
           asset_name="pxweb-$TAG_NAME.zip"
+          upload_path="${RELEASE_UPLOAD_URL#https://uploads.github.com}"
           existing_asset_ids=$(
             gh api --paginate "/repos/$GH_REPO/releases/$RELEASE_ID/assets?per_page=100" |
               jq -sr --arg name "$asset_name" 'map(.[]) | map(select(.name == $name)) | .[].id'
@@ -175,9 +176,10 @@ jobs:
           fi
 
           gh api \
+            --hostname uploads.github.com \
             --method POST \
             --header "Content-Type: application/zip" \
-            "${RELEASE_UPLOAD_URL}?name=${asset_name}" \
+            "${upload_path%\{*}?name=${asset_name}" \
             --input "$asset_name" \
             >/dev/null
 
