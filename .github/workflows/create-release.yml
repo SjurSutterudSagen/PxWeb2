@@ -22,18 +22,21 @@ jobs:
     permissions:
       contents: read
     outputs:
-      tag_name: ${{ steps.validate.outputs.tag_name }}
-      resolved_ref: ${{ steps.validate.outputs.resolved_ref }}
-      version: ${{ steps.validate.outputs.version }}
-      major: ${{ steps.validate.outputs.major }}
-      major_minor: ${{ steps.validate.outputs.major_minor }}
+      tag_name: ${{ steps.semver.outputs.tag_name }}
+      resolved_ref: ${{ steps.release.outputs.resolved_ref }}
+      version: ${{ steps.semver.outputs.version }}
+      major: ${{ steps.semver.outputs.major }}
+      major_minor: ${{ steps.semver.outputs.major_minor }}
+      release_id: ${{ steps.release.outputs.release_id }}
+      release_tag_name: ${{ steps.release.outputs.release_tag_name }}
+      release_upload_url: ${{ steps.release.outputs.release_upload_url }}
 
     env:
       TAG_NAME: ${{ inputs.tag_name }}
 
     steps:
       - name: Validate tag format and semver
-        id: validate
+        id: semver
         run: |
           if ! [[ "$TAG_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
             echo "Invalid tag format: $TAG_NAME"
@@ -59,36 +62,68 @@ jobs:
           fetch-depth: 0
           persist-credentials: false # Prevents GH CLI from using the token for git operations, ensuring it only uses it for API calls.
       - name: Validate release exists and is draft
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          release_json=$(gh api --paginate "/repos/$GH_REPO/releases?per_page=100" | jq -s --arg tag "$TAG_NAME" 'map(.[]) | map(select(.tag_name == $tag)) | first')
+          print_candidates() {
+            jq -r '.[] | "- id=\(.id) tag_name=\(.tag_name // "null") name=\(.name // "") target_commitish=\(.target_commitish // "null")"' <<<"$1"
+          }
 
-          if [ -z "$release_json" ] || [ "$release_json" = "null" ]; then
-            echo "Release $TAG_NAME does not exist."
+          draft_releases=$(
+            gh api --paginate "/repos/$GH_REPO/releases?per_page=100" |
+              jq -s 'map(.[]) | map(select(.draft == true))'
+          )
+
+          exact_matches=$(jq --arg tag "$TAG_NAME" '[.[] | select(.tag_name == $tag)]' <<<"$draft_releases")
+          exact_count=$(jq 'length' <<<"$exact_matches")
+
+          if [ "$exact_count" -gt 1 ]; then
+            echo "Multiple draft releases exactly match tag_name $TAG_NAME. Resolve the ambiguity before rerunning:"
+            print_candidates "$exact_matches"
             exit 1
           fi
 
-          is_draft=$(echo "$release_json" | jq -r '.draft')
-          target_commitish=$(echo "$release_json" | jq -r '.target_commitish')
+          if [ "$exact_count" -eq 1 ]; then
+            release_json=$(jq '.[0]' <<<"$exact_matches")
+          else
+            name_matches=$(jq --arg tag "$TAG_NAME" '[.[] | select((.name // "") | contains($tag))]' <<<"$draft_releases")
+            name_count=$(jq 'length' <<<"$name_matches")
 
-          if [ "$is_draft" != "true" ]; then
-            echo "Release $TAG_NAME is not a draft. Aborting to keep releases immutable."
-            exit 1
+            if [ "$name_count" -gt 1 ]; then
+              echo "Multiple draft releases have names containing $TAG_NAME. Resolve the ambiguity before rerunning:"
+              print_candidates "$name_matches"
+              exit 1
+            fi
+
+            if [ "$name_count" -eq 1 ]; then
+              release_json=$(jq '.[0]' <<<"$name_matches")
+            else
+              echo "No draft release matched $TAG_NAME. Checked draft tag_name first, then draft release name containing the tag."
+              exit 1
+            fi
           fi
 
           if git rev-parse -q --verify "refs/tags/$TAG_NAME" >/dev/null; then
             resolved_ref="refs/tags/$TAG_NAME"
           else
+            target_commitish=$(jq -r '.target_commitish' <<<"$release_json")
             if [ -z "$target_commitish" ] || [ "$target_commitish" = "null" ]; then
-              echo "Release $TAG_NAME is missing target_commitish."
+              echo "Matched draft release for $TAG_NAME is missing target_commitish."
               exit 1
             fi
             resolved_ref="$target_commitish"
           fi
 
+          release_id=$(jq -r '.id' <<<"$release_json")
+          release_tag_name=$(jq -r '.tag_name' <<<"$release_json")
+          release_upload_url="/repos/$GH_REPO/releases/$release_id/assets"
+
           echo "resolved_ref=$resolved_ref" >> "$GITHUB_OUTPUT"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "release_tag_name=$release_tag_name" >> "$GITHUB_OUTPUT"
+          echo "release_upload_url=$release_upload_url" >> "$GITHUB_OUTPUT"
 
   release_asset:
     runs-on: ubuntu-latest
@@ -123,8 +158,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.validate.outputs.release_id }}
+          RELEASE_UPLOAD_URL: ${{ needs.validate.outputs.release_upload_url }}
         run: |
-          gh release upload "$TAG_NAME" "pxweb-$TAG_NAME.zip" --clobber
+          asset_name="pxweb-$TAG_NAME.zip"
+          existing_asset_ids=$(
+            gh api --paginate "/repos/$GH_REPO/releases/$RELEASE_ID/assets?per_page=100" |
+              jq -sr --arg name "$asset_name" 'map(.[]) | map(select(.name == $name)) | .[].id'
+          )
+
+          if [ -n "$existing_asset_ids" ]; then
+            while IFS= read -r asset_id; do
+              [ -n "$asset_id" ] || continue
+              gh api --method DELETE "/repos/$GH_REPO/releases/assets/$asset_id" >/dev/null
+            done <<<"$existing_asset_ids"
+          fi
+
+          gh api \
+            --method POST \
+            --header "Content-Type: application/zip" \
+            "${RELEASE_UPLOAD_URL}?name=${asset_name}" \
+            --input "$asset_name" \
+            >/dev/null
 
   docker_publish:
     runs-on: ubuntu-latest
