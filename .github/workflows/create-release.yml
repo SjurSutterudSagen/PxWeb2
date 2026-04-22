@@ -210,6 +210,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      - name: Normalize image name
+        id: image_name
+        run: echo "repository=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
@@ -217,6 +221,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:${{ needs.release_asset.outputs.version }}
-            ghcr.io/${{ github.repository }}:${{ needs.release_asset.outputs.major_minor }}
-            ghcr.io/${{ github.repository }}:${{ needs.release_asset.outputs.major }}
+            ghcr.io/${{ steps.image_name.outputs.repository }}:${{ needs.release_asset.outputs.version }}
+            ghcr.io/${{ steps.image_name.outputs.repository }}:${{ needs.release_asset.outputs.major_minor }}
+            ghcr.io/${{ steps.image_name.outputs.repository }}:${{ needs.release_asset.outputs.major }}
