@@ -157,31 +157,9 @@ jobs:
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_ID: ${{ needs.validate.outputs.release_id }}
-          RELEASE_UPLOAD_URL: ${{ needs.validate.outputs.release_upload_url }}
+          RELEASE_TAG_NAME: ${{ needs.validate.outputs.release_tag_name }}
         run: |
-          asset_name="pxweb-$TAG_NAME.zip"
-          upload_url="${RELEASE_UPLOAD_URL%\{*}?name=${asset_name}"
-          existing_asset_ids=$(
-            gh api --paginate "/repos/$GH_REPO/releases/$RELEASE_ID/assets?per_page=100" |
-              jq -sr --arg name "$asset_name" 'map(.[]) | map(select(.name == $name)) | .[].id'
-          )
-
-          if [ -n "$existing_asset_ids" ]; then
-            while IFS= read -r asset_id; do
-              [ -n "$asset_id" ] || continue
-              gh api --method DELETE "/repos/$GH_REPO/releases/assets/$asset_id" >/dev/null
-            done <<<"$existing_asset_ids"
-          fi
-
-          curl --fail --silent --show-error \
-            -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Content-Type: application/zip" \
-            --data-binary "@$asset_name" \
-            "$upload_url" \
-            >/dev/null
+          gh release upload "$RELEASE_TAG_NAME" "pxweb-$TAG_NAME.zip" --clobber
 
   docker_publish:
     runs-on: ubuntu-latest
